@@ -10,8 +10,19 @@ class PointSerializer(serializers.ModelSerializer):
         matrix = data.get('matrix')
         x = data.get('x')
         y = data.get('y')
-        if Point.objects.filter(matrix=matrix, x=x, y=y).exists():
-            raise serializers.ValidationError("Point with these coordinates already exists in this matrix.")
+
+        # Skip uniqueness check on update if coordinates remain unchanged.
+        if self.instance:
+            if (self.instance.matrix == matrix and 
+                self.instance.x == x and 
+                self.instance.y == y):
+                return data
+            # Exclude the current instance from the uniqueness check.
+            if Point.objects.filter(matrix=matrix, x=x, y=y).exclude(pk=self.instance.pk).exists():
+                raise serializers.ValidationError("Point with these coordinates already exists in this matrix.")
+        else:
+            if Point.objects.filter(matrix=matrix, x=x, y=y).exists():
+                raise serializers.ValidationError("Point with these coordinates already exists in this matrix.")
         return data
 
 class MatrixMapSerializer(serializers.ModelSerializer):

@@ -10,4 +10,5 @@ urlpatterns = [
     path('points/<map_id>/<int:x>/<int:y>/', PointByCoordinatesView.as_view()),
     path('points/<map_id>/represents/<represents>/', PointByTypeView.as_view()),
     path('pathfinding/', ShortestRoadPathView.as_view()),
+    path('canvas/', CanvasDataView.as_view()),
 ]

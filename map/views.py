@@ -104,12 +104,14 @@ class PointByCoordinatesView(APIView):
     
     def put(self, request, map_id, x, y):
         matrix = MatrixMap.objects.get(pk=map_id)
-        new_x = int(request.data.get('x', x))
-        new_y = int(request.data.get('y', y))
-        if not validate_coordinates(matrix, new_x, new_y):
-            return Response({'error': 'Coordinates out of range'}, status=status.HTTP_400_BAD_REQUEST)
         point = Point.objects.get(matrix=map_id, x=x, y=y)
-        serializer = PointSerializer(point, data=request.data)
+        data = {
+            'matrix': map_id,
+            'x': x,
+            'y': y,
+            'represents': request.data.get('represents', point.represents)
+        }
+        serializer = PointSerializer(point, data=data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
@@ -147,3 +149,24 @@ class ShortestRoadPathView(APIView):
         if path is None:
             return Response({'error': 'No path found'}, status=400)
         return Response({'path': path})
+
+class CanvasDataView(APIView):
+    def get(self, request):
+        matrix_id = request.query_params.get('matrix_id')
+        if not matrix_id:
+            return Response({'error': 'matrix_id required'}, status=400)
+        try:
+            matrix = MatrixMap.objects.get(pk=matrix_id)
+        except MatrixMap.DoesNotExist:
+            return Response({'error': 'Matrix not found'}, status=404)
+        grid = []
+        for i in range(matrix.X):
+            row = []
+            for j in range(matrix.Y):
+                try:
+                    point = matrix.points.get(x=i, y=j)
+                    row.append({'x': point.x, 'y': point.y, 'represents': point.represents})
+                except Exception:
+                    row.append({'x': i, 'y': j, 'represents': None})
+            grid.append(row)
+        return Response({'grid': grid})
