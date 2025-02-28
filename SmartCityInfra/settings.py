@@ -38,7 +38,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    "map",
+    "map.apps.MapConfig",  # Make sure you're using the app config
 ]
 
 MIDDLEWARE = [

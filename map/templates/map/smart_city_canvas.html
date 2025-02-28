@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart City Infrastructure Visualization</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .controls {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .canvas-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .canvas-box {
+            flex: 1;
+            min-width: 400px;
+            background-color: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        canvas {
+            border: 1px solid #ccc;
+            cursor: pointer;
+        }
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+            gap: 15px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 5px;
+            border: 1px solid #ccc;
+        }
+        .road { background-color: #ff0; }
+        .building { background-color: #00f; }
+        .park { background-color: #0c0; }
+        .water { background-color: #006; }
+        .other { background-color: #888; }
+        .explored { background-color: rgba(255, 192, 203, 0.5); }
+        .path { background-color: red; }
+        .stats {
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        h1, h2 {
+            margin-top: 0;
+        }
+        button {
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        label {
+            margin-right: 15px;
+        }
+        select, input {
+            padding: 8px;
+            margin-right: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Smart City Infrastructure Visualization</h1>
+        
+        <div class="controls">
+            <h2>Map & Pathfinding Controls</h2>
+            
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color road"></div>
+                    <span>Road</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color building"></div>
+                    <span>Building</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color park"></div>
+                    <span>Park/Ground</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color water"></div>
+                    <span>Water</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color other"></div>
+                    <span>Other</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color explored"></div>
+                    <span>Explored Nodes</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color path"></div>
+                    <span>Final Path</span>
+                </div>
+            </div>
+            
+            <div>
+                <label for="matrix-select">Select Matrix Map:</label>
+                <select id="matrix-select"></select>
+                
+                <label for="visualization-speed">Animation Speed:</label>
+                <input type="range" id="visualization-speed" min="1" max="100" value="50">
+                
+                <button id="find-path-btn">Find Path</button>
+                <button id="reset-btn">Reset</button>
+                <button id="edit-mode-btn">Edit Mode: OFF</button>
+            </div>
+        </div>
+        
+        <div class="canvas-container">
+            <div class="canvas-box">
+                <h2>Dijkstra Algorithm</h2>
+                <canvas id="dijkstra-canvas" width="500" height="500"></canvas>
+                <div id="dijkstra-stats" class="stats">
+                    <p>Click two points on the map to set start and end points.</p>
+                </div>
+            </div>
+            
+            <div class="canvas-box">
+                <h2>A* Algorithm</h2>
+                <canvas id="astar-canvas" width="500" height="500"></canvas>
+                <div id="astar-stats" class="stats">
+                    <p>Click two points on the map to set start and end points.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="instructions">
+            <h3>Instructions:</h3>
+            <ul>
+                <li>Click "Edit Mode: ON" to modify the grid</li>
+                <li>When editing, click or drag to cycle through cell types</li>
+                <li>Set start and end points by clicking on the grid when not in edit mode</li>
+                <li>Click "Find Path" to visualize both algorithms</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let grid = [];
+        let gridRows = 0;
+        let gridCols = 0;
+        let currentMatrixId = null;
+        let cellSize = 20; // Default cell size
+        let startPoint = null;
+        let endPoint = null;
+        let isEditMode = false;
+        let currentEditType = "road"; // Default edit type
+        const editCycle = ["road", "building", "park", "water", "other"];
+        
+        // Variables for drag editing
+        let isDragging = false;
+        let lastEditedCell = null;
+        
+        // Canvas contexts
+        const dijkstraCanvas = document.getElementById('dijkstra-canvas');
+        const dijkstraCtx = dijkstraCanvas.getContext('2d');
+        const astarCanvas = document.getElementById('astar-canvas');
+        const astarCtx = astarCanvas.getContext('2d');
+        
+        // Algorithm visualization data
+        let dijkstraVisualization = {
+            explored: new Set(),
+            path: [],
+            steps: [],
+            currentStep: 0,
+            nodesExplored: 0,
+            pathLength: 0,
+            executionTime: 0
+        };
+        
+        let astarVisualization = {
+            explored: new Set(),
+            path: [],
+            steps: [],
+            currentStep: 0,
+            nodesExplored: 0,
+            pathLength: 0,
+            executionTime: 0
+        };
+        
+        // Fetch available matrix maps and populate the dropdown
+        fetch('/api/map/matrix/')
+            .then(response => response.json())
+            .then(matrices => {
+                const select = document.getElementById('matrix-select');
+                matrices.forEach(matrix => {
+                    const option = document.createElement('option');
+                    option.value = matrix.id;
+                    option.textContent = `${matrix.name} (${matrix.X}x${matrix.Y})`;
+                    select.appendChild(option);
+                });
+                
+                // Load the first matrix by default
+                if (matrices.length > 0) {
+                    currentMatrixId = matrices[0].id;
+                    loadMatrix(currentMatrixId);
+                }
+            });
+        
+        // Event listeners
+        document.getElementById('matrix-select').addEventListener('change', function() {
+            currentMatrixId = this.value;
+            resetVisualization();
+            loadMatrix(currentMatrixId);
+        });
+        
+        document.getElementById('find-path-btn').addEventListener('click', function() {
+            if (startPoint && endPoint) {
+                findAndVisualizeShortestPaths();
+            } else {
+                alert('Please select start and end points first.');
+            }
+        });
+        
+        document.getElementById('reset-btn').addEventListener('click', resetVisualization);
+        
+        document.getElementById('edit-mode-btn').addEventListener('click', function() {
+            isEditMode = !isEditMode;
+            this.textContent = `Edit Mode: ${isEditMode ? 'ON' : 'OFF'}`;
+            resetVisualization();
+        });
+        
+        // Handle mouse events for draggable editing
+        function setupMouseEvents(canvas, ctx) {
+            // Mouse down - start dragging
+            canvas.addEventListener('mousedown', function(event) {
+                if (isEditMode) {
+                    isDragging = true;
+                    const cell = getCellFromEvent(event, canvas);
+                    if (cell) {
+                        lastEditedCell = cell;
+                        changeCellType(cell.x, cell.y);
+                    }
+                } else {
+                    // Regular click handling for non-edit mode
+                    handleCanvasClick(event, canvas, ctx);
+                }
+            });
+            
+            // Mouse move - continue dragging
+            canvas.addEventListener('mousemove', function(event) {
+                if (isEditMode && isDragging) {
+                    const cell = getCellFromEvent(event, canvas);
+                    if (cell && (lastEditedCell === null || cell.x !== lastEditedCell.x || cell.y !== lastEditedCell.y)) {
+                        lastEditedCell = cell;
+                        changeCellType(cell.x, cell.y);
+                    }
+                }
+            });
+            
+            // Mouse up - stop dragging
+            canvas.addEventListener('mouseup', function() {
+                isDragging = false;
+                lastEditedCell = null;
+            });
+            
+            // Mouse leave - stop dragging
+            canvas.addEventListener('mouseleave', function() {
+                isDragging = false;
+                lastEditedCell = null;
+            });
+        }
+        
+        // Set up mouse events for both canvases
+        setupMouseEvents(dijkstraCanvas, dijkstraCtx);
+        setupMouseEvents(astarCanvas, astarCtx);
+        
+        function getCellFromEvent(event, canvas) {
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((event.clientX - rect.left) / cellSize);
+            const y = Math.floor((event.clientY - rect.top) / cellSize);
+            
+            if (x < 0 || x >= gridCols || y < 0 || y >= gridRows) return null;
+            return { x, y };
+        }
+        
+        // Fix how points are accessed to match the grid structure
+        function changeCellType(x, y) {
+            // Get current cell type - Note that grid[y][x] is correct here
+            let currentIndex = editCycle.indexOf(grid[y][x].represents);
+            currentIndex = (currentIndex + 1) % editCycle.length;
+            grid[y][x].represents = editCycle[currentIndex];
+            
+            // Update the cell in both canvases
+            drawCell(dijkstraCtx, x, y, grid[y][x].represents);
+            drawCell(astarCtx, x, y, grid[y][x].represents);
+            
+            // Save the change to the server
+            updateCellType(currentMatrixId, x, y, grid[y][x].represents);
+        }
+        
+        // Handle regular click events (non-dragging)
+        function handleCanvasClick(event, canvas, ctx) {
+            const cell = getCellFromEvent(event, canvas);
+            if (!cell) return;
+            
+            if (isEditMode) {
+                changeCellType(cell.x, cell.y);
+            } else {
+                // Path finding mode: Set start/end points
+                if (!startPoint) {
+                    startPoint = { x: cell.x, y: cell.y };
+                    drawStartPoint(dijkstraCtx, cell.x, cell.y);
+                    drawStartPoint(astarCtx, cell.x, cell.y);
+                } else if (!endPoint) {
+                    endPoint = { x: cell.x, y: cell.y };
+                    drawEndPoint(dijkstraCtx, cell.x, cell.y);
+                    drawEndPoint(astarCtx, cell.x, cell.y);
+                } else {
+                    // Reset and set new start point
+                    resetVisualization();
+                    startPoint = { x: cell.x, y: cell.y };
+                    drawStartPoint(dijkstraCtx, cell.x, cell.y);
+                    drawStartPoint(astarCtx, cell.x, cell.y);
+                }
+            }
+        }
+        
+        // Update cell type on the server with improved error handling
+        function updateCellType(matrixId, x, y, represents) {
+            console.log(`Updating cell (${x},${y}) to type: ${represents}`);
+            
+            fetch(`/api/map/points/${matrixId}/${x}/${y}/`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({ represents }),
+                credentials: 'same-origin'
+            })
+            .then(response => {
+                if (!response.ok) {
+                    console.error(`Server returned error ${response.status} for update of cell (${x},${y})`);
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log(`Cell (${x},${y}) updated successfully to ${data.represents}`);
+                
+                // Update the local grid to match the server response
+                grid[y][x].represents = data.represents;
+            })
+            .catch(error => {
+                console.error('Error updating cell:', error);
+                
+                // Refresh the grid to ensure UI matches the server state
+                if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+                    console.error('Network error, consider refreshing the page');
+                }
+            });
+        }
+        
+        // Load matrix data from the server with debugging
+        function loadMatrix(matrixId) {
+            console.log(`Loading matrix ${matrixId}...`);
+            
+            fetch(`/api/map/canvas/?matrix_id=${matrixId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to load matrix: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    grid = data.grid;
+                    gridRows = grid.length;
+                    gridCols = grid[0].length;
+                    
+                    console.log(`Loaded grid: ${gridRows}x${gridCols}`);
+                    
+                    // Count road cells for debugging and verify coordinate order
+                    let roadCount = 0;
+                    for (let y = 0; y < gridRows; y++) {
+                        for (let x = 0; x < gridCols; x++) {
+                            if (grid[y][x].represents === 'road') {
+                                roadCount++;
+                                console.log(`Road at: (${x}, ${y})`);
+                            }
+                        }
+                    }
+                    console.log(`Found ${roadCount} road cells in the grid`);
+                    
+                    // Adjust canvas sizes based on grid dimensions
+                    const maxWidth = 500;
+                    const maxHeight = 500;
+                    cellSize = Math.min(maxWidth / gridCols, maxHeight / gridRows);
+                    
+                    dijkstraCanvas.width = cellSize * gridCols;
+                    dijkstraCanvas.height = cellSize * gridRows;
+                    astarCanvas.width = cellSize * gridCols;
+                    astarCanvas.height = cellSize * gridRows;
+                    
+                    drawGrid(dijkstraCtx);
+                    drawGrid(astarCtx);
+                })
+                .catch(error => {
+                    console.error('Error loading matrix:', error);
+                });
+        }
+        
+        // Draw the complete grid
+        function drawGrid(ctx) {
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            
+            for (let y = 0; y < gridRows; y++) {
+                for (let x = 0; x < gridCols; x++) {
+                    drawCell(ctx, x, y, grid[y][x].represents);
+                }
+            }
+        }
+        
+        // Draw a single cell
+        function drawCell(ctx, x, y, type) {
+            const colors = {
+                'road': '#ffff00',     // Yellow
+                'building': '#0000ff', // Blue
+                'park': '#00cc00',     // Green
+                'water': '#000066',    // Dark Blue
+                'other': '#888888'     // Gray
+            };
+            
+            ctx.fillStyle = colors[type] || colors.other;
+            ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            ctx.strokeStyle = '#000';
+            ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+        }
+        
+        // Draw start point marker
+        function drawStartPoint(ctx, x, y) {
+            drawCell(ctx, x, y, grid[y][x].represents); // Draw base cell
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.5)'; // Semi-transparent green
+            ctx.beginPath();
+            ctx.arc(
+                (x + 0.5) * cellSize,
+                (y + 0.5) * cellSize,
+                cellSize * 0.4,
+                0, Math.PI * 2
+            );
+            ctx.fill();
+            ctx.stroke();
+        }
+        
+        // Draw end point marker
+        function drawEndPoint(ctx, x, y) {
+            drawCell(ctx, x, y, grid[y][x].represents); // Draw base cell
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)'; // Semi-transparent red
+            ctx.beginPath();
+            ctx.arc(
+                (x + 0.5) * cellSize,
+                (y + 0.5) * cellSize,
+                cellSize * 0.4,
+                0, Math.PI * 2
+            );
+            ctx.fill();
+            ctx.stroke();
+        }
+        
+        // Find and visualize shortest paths using both algorithms
+        function findAndVisualizeShortestPaths() {
+            if (!startPoint || !endPoint) return;
+            
+            resetAlgorithmVisualizations();
+            
+            console.log(`Finding path from (${startPoint.x},${startPoint.y}) to (${endPoint.x},${endPoint.y})`);
+            console.log(`Start point type: ${grid[startPoint.y][startPoint.x].represents}`);
+            console.log(`End point type: ${grid[endPoint.y][endPoint.x].represents}`);
+            
+            // If start or end are not roads, notify user
+            if (grid[startPoint.y][startPoint.x].represents !== 'road' || 
+                grid[endPoint.y][endPoint.x].represents !== 'road') {
+                alert('Both start and end points must be road cells. Please select road cells for pathfinding.');
+                document.getElementById('dijkstra-stats').innerHTML = 
+                    '<p>Error: Both start and end must be road cells</p>';
+                document.getElementById('astar-stats').innerHTML = 
+                    '<p>Error: Both start and end must be road cells</p>';
+                return;
+            }
+            
+            // Request Dijkstra path
+            console.log("Requesting Dijkstra path...");
+            requestPathfinding('dijkstra', dijkstraVisualization, dijkstraCtx, 'dijkstra-stats');
+            
+            // Request A* path separately to avoid interference
+            setTimeout(() => {
+                console.log("Requesting A* path...");
+                requestPathfinding('astar', astarVisualization, astarCtx, 'astar-stats');
+            }, 500);
+        }
+        
+        function requestPathfinding(algorithm, visualization, ctx, statsId) {
+            fetch('/api/map/pathfinding/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({
+                    map_id: currentMatrixId,
+                    start_x: startPoint.x,
+                    start_y: startPoint.y,
+                    end_x: endPoint.x,
+                    end_y: endPoint.y,
+                    algorithm: algorithm
+                }),
+                credentials: 'same-origin'
+            })
+            .then(response => {
+                console.log(`${algorithm} response status:`, response.status);
+                return response.json();
+            })
+            .then(data => {
+                console.log(`${algorithm} response data:`, data);
+                
+                if (data.error) {
+                    console.error(`${algorithm} error:`, data.error);
+                    document.getElementById(statsId).innerHTML = 
+                        `<p>Error: ${data.error}</p>`;
+                    return;
+                }
+                
+                if (!data.path || data.path.length === 0) {
+                    console.error(`${algorithm}: Empty path returned`);
+                    document.getElementById(statsId).innerHTML = 
+                        `<p>Error: No valid path was returned</p>`;
+                    return;
+                }
+                
+                visualization.path = data.path;
+                visualization.explored = new Set(data.explored.map(p => `${p[0]},${p[1]}`));
+                visualization.nodesExplored = data.explored.length;
+                visualization.pathLength = data.path.length;
+                visualization.executionTime = data.execution_time;
+                
+                console.log(`${algorithm} path found with ${visualization.nodesExplored} nodes explored`);
+                
+                // Animate algorithm
+                animateAlgorithm(algorithm);
+                
+                // Update stats display
+                document.getElementById(statsId).innerHTML = 
+                    `<p>Nodes Explored: ${visualization.nodesExplored}</p>
+                     <p>Path Length: ${visualization.pathLength}</p>
+                     <p>Execution Time: ${visualization.executionTime.toFixed(2)} ms</p>`;
+            })
+            .catch(error => {
+                console.error(`${algorithm} fetch error:`, error);
+                document.getElementById(statsId).innerHTML = 
+                    `<p>Error: ${error.message}</p>`;
+            });
+        }
+        
+        // Animate algorithm visualization
+        function animateAlgorithm(algorithm) {
+            const visualization = algorithm === 'dijkstra' ? dijkstraVisualization : astarVisualization;
+            const ctx = algorithm === 'dijkstra' ? dijkstraCtx : astarCtx;
+            
+            // Reset canvas first
+            drawGrid(ctx);
+            if (startPoint) drawStartPoint(ctx, startPoint.x, startPoint.y);
+            if (endPoint) drawEndPoint(ctx, endPoint.x, endPoint.y);
+            
+            // Animation speed (from slider)
+            const speed = document.getElementById('visualization-speed').value;
+            const exploredDelay = 2000 / Math.max(1, visualization.nodesExplored) * (100 - speed) / 100;
+            
+            // Animate explored nodes first
+            let exploredPoints = Array.from(visualization.explored).map(p => p.split(',').map(Number));
+            let exploredIndex = 0;
+            
+            function animateExplored() {
+                if (exploredIndex < exploredPoints.length) {
+                    const [x, y] = exploredPoints[exploredIndex];
+                    
+                    // Skip start and end points
+                    if (!(x === startPoint.x && y === startPoint.y) && 
+                        !(x === endPoint.x && y === endPoint.y)) {
+                        drawExploredNode(ctx, x, y);
+                    }
+                    
+                    exploredIndex++;
+                    setTimeout(animateExplored, exploredDelay);
+                } else {
+                    // After explored animation completes, animate the path
+                    animatePath();
+                }
+            }
+            
+            function animatePath() {
+                const pathDelay = 100 * (100 - speed) / 100;
+                let pathIndex = 0;
+                
+                function drawPathStep() {
+                    if (pathIndex < visualization.path.length) {
+                        const [x, y] = visualization.path[pathIndex];
+                        
+                        // Skip start and end points
+                        if (!(x === startPoint.x && y === startPoint.y) && 
+                            !(x === endPoint.x && y === endPoint.y)) {
+                            drawPathNode(ctx, x, y);
+                        }
+                        
+                        pathIndex++;
+                        setTimeout(drawPathStep, pathDelay);
+                    }
+                }
+                
+                drawPathStep();
+            }
+            
+            animateExplored();
+        }
+        
+        // Draw an explored node
+        function drawExploredNode(ctx, x, y) {
+            drawCell(ctx, x, y, grid[y][x].represents); // Draw base cell
+            ctx.fillStyle = 'rgba(255, 192, 203, 0.5)'; // Semi-transparent pink
+            ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+        }
+        
+        // Draw a path node
+        function drawPathNode(ctx, x, y) {
+            drawCell(ctx, x, y, grid[y][x].represents); // Draw base cell
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.7)'; // Semi-transparent red
+            ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+        }
+        
+        // Reset algorithm visualizations
+        function resetAlgorithmVisualizations() {
+            dijkstraVisualization = {
+                explored: new Set(),
+                path: [],
+                steps: [],
+                currentStep: 0,
+                nodesExplored: 0,
+                pathLength: 0,
+                executionTime: 0
+            };
+            
+            astarVisualization = {
+                explored: new Set(),
+                path: [],
+                steps: [],
+                currentStep: 0,
+                nodesExplored: 0,
+                pathLength: 0,
+                executionTime: 0
+            };
+        }
+        
+        // Reset the entire visualization
+        function resetVisualization() {
+            startPoint = null;
+            endPoint = null;
+            resetAlgorithmVisualizations();
+            
+            drawGrid(dijkstraCtx);
+            drawGrid(astarCtx);
+            
+            document.getElementById('dijkstra-stats').innerHTML = 
+                '<p>Click two points on the map to set start and end points.</p>';
+            document.getElementById('astar-stats').innerHTML = 
+                '<p>Click two points on the map to set start and end points.</p>';
+        }
+        
+        // Get CSRF token from cookies
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+    </script>
+</body>
+</html>

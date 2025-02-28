@@ -34,3 +34,9 @@ class Point(models.Model):
     
     def __str__(self):
         return f"Point ({self.x}, {self.y})"
+    
+    def save(self, *args, **kwargs):
+        if self.represents not in [choice[0] for choice in represents_choice]:
+            print(f"WARNING: Invalid represents value: '{self.represents}', defaulting to 'other'")
+            self.represents = 'other'
+        super().save(*args, **kwargs)

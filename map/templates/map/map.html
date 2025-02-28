@@ -1,0 +1,251 @@
+{% load map_tags %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matrix Map Viewer</title>
+    <style>
+        .grid-container {
+            display: grid;
+            gap: 1px;
+        }
+        .cell {
+            width: 25px;
+            height: 25px;
+            border: 1px solid #ccc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            cursor: pointer;
+        }
+        .road { 
+            background-color: #ff0; /* Yellow */ 
+            color: black;
+        }
+        .building { 
+            background-color: #00f; /* Blue */ 
+            color: white;
+        }
+        .park { 
+            background-color: #0c0; /* Green */
+            color: black;
+        }
+        .water { 
+            background-color: #006; /* Dark Blue */
+            color: white;
+        }
+        .other { 
+            background-color: #888; /* Gray */
+            color: white;
+        }
+        .matrix-info {
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+        .legend {
+            display: flex;
+            margin: 20px 0;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-right: 20px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 5px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <h1>Matrix Map Viewer</h1>
+    <div class="matrix-info">
+        <h2>{{ matrix.name }}</h2>
+        <p>Size: {{ matrix.X }}x{{ matrix.Y }} (Distance per Unit: {{ matrix.distancePerUnit }})</p>
+    </div>
+    
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color road"></div>
+            <span>Road</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color building"></div>
+            <span>Building</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color park"></div>
+            <span>Park/Ground</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color water"></div>
+            <span>Water</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color other"></div>
+            <span>Other</span>
+        </div>
+    </div>
+    
+    <div class="grid-container" id="grid" style="grid-template-columns: repeat({{ matrix.Y|add:1 }}, 25px);">
+        <!-- Coordinate labels for x-axis -->
+        <div class="cell" style="background-color: #ddd;">x/y</div>
+        {% for y in y_range %}
+            <div class="cell" style="background-color: #ddd;">{{ y }}</div>
+        {% endfor %}
+        
+        <!-- Grid with coordinate labels for y-axis -->
+        {% for x in x_range %}
+            <div class="cell" style="background-color: #ddd;">{{ x }}</div>
+            {% for y in y_range %}
+                {% with key=x|stringformat:"s"|add:"-"|add:y|stringformat:"s" %}
+                {% with represents=points_dict|get_item:key|default:"other" %}
+                <div class="cell {{ represents }}"
+                     data-x="{{ x }}" 
+                     data-y="{{ y }}" 
+                     data-map-id="{{ matrix.id }}"
+                     data-represents="{{ represents }}"
+                     title="({{ x }},{{ y }}) - {{ represents }}"
+                     onclick="cycleRepresents(this)">
+                </div>
+                {% endwith %}
+                {% endwith %}
+            {% endfor %}
+        {% endfor %}
+    </div>
+
+    <script>
+        const representsTypes = ['road', 'building', 'park', 'water', 'other'];
+        
+        // Debug initial state
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('Map loaded. Matrix ID:', {{ matrix.id }});
+            document.querySelectorAll('.cell[data-represents]').forEach(cell => {
+                const x = cell.dataset.x;
+                const y = cell.dataset.y;
+                const represents = cell.dataset.represents;
+                console.log(`Cell (${x},${y}) = ${represents || 'undefined'}`);
+                
+                // Ensure the cell has the correct class even if data-represents is set
+                if (represents && !cell.classList.contains(represents)) {
+                    representsTypes.forEach(type => cell.classList.remove(type));
+                    cell.classList.add(represents);
+                }
+            });
+        });
+        
+        function cycleRepresents(element) {
+            // Get the current represents value from data attribute
+            let currentClass = element.dataset.represents || 'other';
+            
+            let currentIndex = representsTypes.indexOf(currentClass);
+            if (currentIndex === -1 || currentIndex === representsTypes.length - 1) {
+                currentIndex = 0;
+            } else {
+                currentIndex++;
+            }
+            
+            const newType = representsTypes[currentIndex];
+            console.log(`Changing from ${currentClass} to ${newType}`);
+            
+            // Remove all type classes and add the new one
+            representsTypes.forEach(type => element.classList.remove(type));
+            element.classList.add(newType);
+            
+            // Update the data attribute
+            element.dataset.represents = newType;
+            
+            // Get coordinates
+            const x = element.dataset.x;
+            const y = element.dataset.y;
+            const mapId = element.dataset.mapId;
+            
+            // Get CSRF token from cookie or meta tag
+            const csrftoken = getCookie('csrftoken') || '{{ csrf_token }}';
+            
+            console.log(`Updating point at (${x},${y}) in map ${mapId} to ${newType} with CSRF: ${csrftoken ? 'Present' : 'Missing'}`);
+            
+            // Send PUT request to update the point
+            fetch(`/api/map/points/${mapId}/${x}/${y}/`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrftoken
+                },
+                body: JSON.stringify({
+                    'represents': newType
+                }),
+                credentials: 'same-origin'  // Include credentials/cookies
+            })
+            .then(response => {
+                if (!response.ok) {
+                    console.error('Server returned error:', response.status);
+                    throw new Error('Network response was not ok: ' + response.status);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Point updated successfully:', data);
+                
+                // Update the title and data attributes
+                element.title = `(${x},${y}) - ${newType}`;
+                element.dataset.represents = newType;
+                
+                // Double-check the API response
+                if (data.represents && data.represents !== newType) {
+                    console.warn(`API returned different type: ${data.represents}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error updating point:', error);
+                
+                // Revert the class if update fails
+                element.classList.remove(newType);
+                element.classList.add(currentClass);
+                element.dataset.represents = currentClass;
+            });
+        }
+        
+        // Helper function to get CSRF cookie
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        // Debug: Log all points on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('Map loaded. Matrix ID:', {{ matrix.id }});
+            const cells = document.querySelectorAll('.cell[data-x]');
+            console.log(`Found ${cells.length} grid cells`);
+        });
+
+        // Debug the initial render
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log("Checking initial grid colors");
+            document.querySelectorAll('.cell[data-x]').forEach(cell => {
+                const x = cell.dataset.x;
+                const y = cell.dataset.y;
+                const represents = cell.dataset.represents;
+                const hasClass = cell.classList.contains(represents);
+                console.log(`Cell (${x},${y}): represents=${represents}, hasClass=${hasClass}, classList=${cell.className}`);
+            });
+        });
+    </script>
+</body>
+</html>

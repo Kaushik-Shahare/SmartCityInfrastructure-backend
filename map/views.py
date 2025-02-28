@@ -1,10 +1,11 @@
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .models import *
 from .serializers import *
-from .utils.pathfinding import dijkstra, find_next_closest_road
+# Update this import to include a_star function
+from .utils.pathfinding import dijkstra, a_star, find_next_closest_road
 
 def validate_coordinates(matrix, x, y):
     # Assumes matrix has attributes 'max_x' and 'max_y'
@@ -103,19 +104,32 @@ class PointByCoordinatesView(APIView):
         return Response(serializer.data)
     
     def put(self, request, map_id, x, y):
-        matrix = MatrixMap.objects.get(pk=map_id)
-        point = Point.objects.get(matrix=map_id, x=x, y=y)
-        data = {
-            'matrix': map_id,
-            'x': x,
-            'y': y,
-            'represents': request.data.get('represents', point.represents)
-        }
-        serializer = PointSerializer(point, data=data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            # Get existing point
+            point = Point.objects.get(matrix=map_id, x=x, y=y)
+            
+            # Update represents field
+            represents = request.data.get('represents')
+            if represents:
+                point.represents = represents
+                point.save()
+                
+                # Verify save was successful
+                updated_point = Point.objects.get(pk=point.pk)
+                
+                return Response({
+                    'success': True,
+                    'id': point.id,
+                    'x': x,
+                    'y': y,
+                    'represents': updated_point.represents,
+                })
+            else:
+                return Response({'error': 'No represents value provided'}, status=status.HTTP_400_BAD_REQUEST)
+        except Point.DoesNotExist:
+            return Response({'error': f'Point at ({x},{y}) not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def delete(self, request, map_id, x, y):
         point = Point.objects.get(matrix=map_id, x=x, y=y)
@@ -137,18 +151,51 @@ class ShortestRoadPathView(APIView):
             start_y = int(request.data.get('start_y'))
             end_x = int(request.data.get('end_x'))
             end_y = int(request.data.get('end_y'))
+            algorithm = request.data.get('algorithm', 'dijkstra')  # Default to Dijkstra
+            
         except (TypeError, ValueError):
             return Response({'error': 'Invalid input'}, status=400)
             
         matrix = MatrixMap.objects.get(pk=map_id)
         start = (start_x, start_y)
         end = (end_x, end_y)
-        path = dijkstra(matrix, start, end)
+        
+        # Check if start and end are roads
+        road_set = set((p.x, p.y) for p in matrix.points.filter(represents='road'))
+        if start not in road_set:
+            return Response({'error': 'Start point is not a road'}, status=400)
+        if end not in road_set:
+            return Response({'error': 'End point is not a road'}, status=400)
+        
+        import time
+        start_time = time.time()
+        
+        # Track visited nodes for visualization
+        explored_nodes = []
+        
+        # Run the appropriate algorithm
+        if algorithm == 'astar':
+            path = a_star(matrix, start, end, explored_nodes=explored_nodes)
+        else:
+            path = dijkstra(matrix, start, end, explored_nodes=explored_nodes)
+        
+        execution_time = (time.time() - start_time) * 1000  # in milliseconds
+        
         if path is None:
-            path = find_next_closest_road(matrix, start, end, algorithm='dijkstra')
+            if algorithm == 'astar':
+                path = find_next_closest_road(matrix, start, end, algorithm='astar', explored_nodes=explored_nodes)
+            else:
+                path = find_next_closest_road(matrix, start, end, algorithm='dijkstra', explored_nodes=explored_nodes)
+        
         if path is None:
-            return Response({'error': 'No path found'}, status=400)
-        return Response({'path': path})
+            return Response({'error': 'No path found between the selected points'}, status=400)
+        
+        return Response({
+            'path': path,
+            'explored': explored_nodes,
+            'execution_time': execution_time,
+            'algorithm': algorithm
+        })
 
 class CanvasDataView(APIView):
     def get(self, request):
@@ -159,14 +206,62 @@ class CanvasDataView(APIView):
             matrix = MatrixMap.objects.get(pk=matrix_id)
         except MatrixMap.DoesNotExist:
             return Response({'error': 'Matrix not found'}, status=404)
+        
+        # Create a dictionary for quick point lookup
+        points_dict = {}
+        for point in matrix.points.all():
+            points_dict[f"{point.x},{point.y}"] = point
+        
+        # Build grid with consistent coordinate system
         grid = []
-        for i in range(matrix.X):
+        for y in range(matrix.Y):  # Note: Switched from x to y as outer loop
             row = []
-            for j in range(matrix.Y):
-                try:
-                    point = matrix.points.get(x=i, y=j)
+            for x in range(matrix.X):  # Note: Switched from y to x as inner loop
+                key = f"{x},{y}"
+                if key in points_dict:
+                    point = points_dict[key]
                     row.append({'x': point.x, 'y': point.y, 'represents': point.represents})
-                except Exception:
-                    row.append({'x': i, 'y': j, 'represents': None})
+                else:
+                    row.append({'x': x, 'y': y, 'represents': 'other'})
             grid.append(row)
+        
         return Response({'grid': grid})
+
+def render_map(request):
+    return render(request, 'map.html')
+
+def map_html_view(request, map_id):
+    from django.template.defaulttags import register
+    
+    matrix = get_object_or_404(MatrixMap, pk=map_id)
+    points = Point.objects.filter(matrix=map_id)
+    
+    # Create a dictionary of points by coordinates for easy lookup in the template
+    points_dict = {}
+    for point in points:
+        key = f"{point.x}-{point.y}"
+        points_dict[key] = point.represents
+    
+    # Debug: check how many non-default points we have
+    non_default = len([p for p in points if p.represents != 'other'])
+    
+    # Generate ranges for the grid
+    x_range = range(matrix.X)
+    y_range = range(matrix.Y)
+    
+    context = {
+        'matrix': matrix,
+        'points_dict': points_dict,
+        'x_range': x_range,
+        'y_range': y_range,
+    }
+    
+    return render(request, 'map/map.html', context)
+
+def smart_city_view(request, map_id=None):
+    # We'll pass map_id but actually use AJAX to load the data
+    context = {}
+    if map_id:
+        context['map_id'] = map_id
+    
+    return render(request, 'map/smart_city_canvas.html', context)

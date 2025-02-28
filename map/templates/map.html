@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Smart City Infrastructure Map</title>
+    <style>
+        /* ...existing code... */
+        #mapCanvas { border: 1px solid #000; }
+    </style>
+</head>
+<body>
+    <canvas id="mapCanvas" width="800" height="600"></canvas>
+    <br>
+    <button id="shortestPathBtn">Find Shortest Path</button>
+    <!-- ...existing code... -->
+    <script>
+        const canvas = document.getElementById('mapCanvas');
+        const ctx = canvas.getContext('2d');
+        let grid = [], gridRows = 0, gridCols = 0;
+        const mapId = 1; // adjust as needed
+        const representsOptions = ['empty', 'building', 'road', 'park'];
+        let selectedCells = [];
+        let isSelectionMode = false;
+        
+        // Add zoom functionality
+        let zoom = 1;
+        const initialCellSize = 60;
+        let cellSize = initialCellSize * zoom;
+        
+        // Fetch grid data from backend
+        function fetchGrid() {
+            fetch(`/canvas/?matrix_id=${mapId}`)
+                .then(res => res.json())
+                .then(data => {
+                    grid = data.grid;
+                    gridRows = grid.length;
+                    gridCols = grid[0].length;
+                    drawGrid();
+                });
+        }
+        
+        // Draw grid using current cellSize for zoom
+        function drawGrid() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let row = 0; row < gridRows; row++) {
+                for (let col = 0; col < gridCols; col++) {
+                    ctx.fillStyle = getColor(grid[row][col].represents);
+                    ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+                    ctx.strokeRect(col * cellSize, row * cellSize, cellSize, cellSize);
+                }
+            }
+        }
+        
+        // Get color based on represents value
+        function getColor(represents) {
+            switch(represents) {
+                case 'building': return '#888';
+                case 'road': return '#FFF';
+                case 'park': return '#0F0';
+                default: return '#CCC';
+            }
+        }
+        
+        // Highlight cell for selection
+        function highlightCell(row, col, color) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(col * cellSize, row * cellSize, cellSize, cellSize);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+        }
+        
+        // Handle canvas click: cycle represents or select for shortest path.
+        canvas.addEventListener('click', function(event) {
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            const col = Math.floor(x / cellSize);
+            const row = Math.floor(y / cellSize);
+            
+            if (isSelectionMode) {
+                if (selectedCells.length < 2) {
+                    selectedCells.push({ row, col });
+                    highlightCell(row, col, 'yellow');
+                    if (selectedCells.length === 2) findShortestPath();
+                }
+                return;
+            }
+            let cell = grid[row][col];
+            let idx = representsOptions.indexOf(cell.represents);
+            idx = (idx === -1) ? 0 : (idx + 1) % representsOptions.length;
+            cell.represents = representsOptions[idx];
+            ctx.fillStyle = getColor(cell.represents);
+            ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+            ctx.strokeRect(col * cellSize, row * cellSize, cellSize, cellSize);
+            fetch(`/points/${mapId}/${row}/${col}/`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ represents: cell.represents })
+            });
+        });
+        
+        // Handle shortest path button click.
+        document.getElementById('shortestPathBtn').addEventListener('click', function() {
+            isSelectionMode = true;
+            selectedCells = [];
+            drawGrid();
+            alert('Select two cells for shortest path calculation.');
+        });
+        
+        // Find shortest path and animate it.
+        function findShortestPath() {
+            const start = { x: selectedCells[0].col, y: selectedCells[0].row };
+            const end   = { x: selectedCells[1].col, y: selectedCells[1].row };
+            fetch(`/pathfinding/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    map_id: mapId,
+                    start_x: start.x,
+                    start_y: start.y,
+                    end_x: end.x,
+                    end_y: end.y
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    alert(data.error);
+                    isSelectionMode = false;
+                    drawGrid();
+                } else {
+                    animatePath(data.path);
+                }
+            });
+        }
+        
+        // Animate the path on canvas.
+        function animatePath(path) {
+            let index = 0;
+            const anim = setInterval(() => {
+                if (index >= path.length) {
+                    clearInterval(anim);
+                    isSelectionMode = false;
+                    return;
+                }
+                const point = path[index];
+                ctx.fillStyle = 'red';
+                ctx.beginPath();
+                ctx.arc(point[0] * cellSize + cellSize / 2, point[1] * cellSize + cellSize / 2, Math.min(cellSize, cellSize) / 4, 0, Math.PI * 2);
+                ctx.fill();
+                index++;
+            }, 300);
+        }
+        
+        // Handle mouse wheel for zooming in and out.
+        canvas.addEventListener('wheel', function(event) {
+            event.preventDefault();
+            const zoomStep = 0.05;
+            if (event.deltaY < 0) {
+                zoom = Math.min(zoom + zoomStep, 3);
+            } else {
+                zoom = Math.max(zoom - zoomStep, 0.5);
+            }
+            cellSize = initialCellSize * zoom;
+            drawGrid();
+        });
+        
+        fetchGrid();
+    </script>
+</body>
+</html>
