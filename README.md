@@ -8,6 +8,10 @@ To find the shortest path between two locations, the system will use the **Dijks
 - The **Dijkstra's algorithm** is a graph search algorithm that solves the single-source shortest path problem for a graph with non-negative edge weights, producing a shortest path tree.
 - The **A* algorithm** is a computer algorithm that is widely used in pathfinding and graph traversal. It is an extension of Dijkstra's algorithm with the addition of a heuristic function to improve the efficiency of the search.
 
+### Initial designing of the system 
+
+![System Design](./Images/InitaialDesign.png)
+
 ## Getting Started
 
 ### Prerequisites
